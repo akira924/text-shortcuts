@@ -54,12 +54,34 @@
     return false;
   }
 
+  // Cached native value setters, so we can write .value directly instead of
+  // going through execCommand (which simulates keystrokes and gets slow for
+  // large strings). This is also the standard way to update a React-controlled
+  // input/textarea from outside React.
+  const nativeValueSetters = new WeakMap();
+  function getNativeValueSetter(el) {
+    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    let setter = nativeValueSetters.get(proto);
+    if (!setter) {
+      setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+      nativeValueSetters.set(proto, setter);
+    }
+    return setter;
+  }
+
   function expandInPlainField(el, key, expansion) {
     const cursor = el.selectionEnd;
     const start = cursor - key.length;
-    el.setSelectionRange(start, cursor);
+    const value = el.value;
+    const newValue = value.slice(0, start) + expansion + value.slice(cursor);
+
     isExpanding = true;
-    document.execCommand("insertText", false, expansion);
+    getNativeValueSetter(el).call(el, newValue);
+    const newCursor = start + expansion.length;
+    el.setSelectionRange(newCursor, newCursor);
+    el.dispatchEvent(
+      new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: expansion })
+    );
     isExpanding = false;
   }
 
@@ -72,7 +94,26 @@
     expandInPlainField(el, match.key, match.expansion);
   }
 
-  function handleContentEditable() {
+  // Rich editors (ProseMirror on chatgpt.com, Slate, Draft.js, Gmail, Notion, ...)
+  // register their own "paste" handler that inserts a whole clipboard chunk in a
+  // single, optimized operation. Simulating a paste is far faster for long
+  // snippets than execCommand('insertText'), which mimics character-by-character
+  // typing and forces the editor's full per-keystroke pipeline to run.
+  function dispatchPaste(target, text) {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", text);
+    const event = new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dataTransfer
+    });
+    // dispatchEvent returns false if a listener called preventDefault(),
+    // which is how these editors signal "I handled the paste myself".
+    const defaultNotPrevented = target.dispatchEvent(event);
+    return !defaultNotPrevented;
+  }
+
+  function handleContentEditable(target) {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
     const range = selection.getRangeAt(0);
@@ -93,7 +134,12 @@
     selection.addRange(newRange);
 
     isExpanding = true;
-    document.execCommand("insertText", false, match.expansion);
+    const handled = dispatchPaste(target, match.expansion);
+    if (!handled) {
+      // No framework paste handler intercepted it (e.g. a plain contenteditable
+      // div) — fall back to the slower but universally-supported approach.
+      document.execCommand("insertText", false, match.expansion);
+    }
     isExpanding = false;
   }
 
@@ -106,7 +152,7 @@
       if (isPlainTextField(target)) {
         handlePlainField(target);
       } else if (target && target.isContentEditable) {
-        handleContentEditable();
+        handleContentEditable(target);
       }
     },
     true
