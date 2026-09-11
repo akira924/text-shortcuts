@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Text Shortcuts</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>Text Shortcuts</h1>
+
+    <form id="add-form">
+      <input id="key-input" type="text" placeholder="Trigger (e.g. zx)" required />
+      <textarea id="value-input" placeholder="Expanded text" required></textarea>
+      <button type="submit">Save shortcut</button>
+    </form>
+
+    <ul id="list"></ul>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
